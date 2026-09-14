@@ -1,0 +1,119 @@
+# ---------------------------------------------------------------------------
+# Every site the bot watches lives here. Add one, save, then run /reload in
+# Discord (or restart). Nothing else in the project needs to change.
+#
+# Minimum entry:
+#   - name: Slo-Tech
+#     url: https://slo-tech.com/rss
+#
+# Full set of keys:
+#   name       required, shown in the embed footer, must be unique
+#   url        required, feed or page URL
+#   type       rss (default) | html | json
+#   channel    channel ID, or a name from the "channels" block below
+#   interval   seconds between polls (default: POLL_INTERVAL from .env)
+#   max_items  most posts per poll, the rest follow next tick (default: 5)
+#   color      embed colour, e.g. "#2b7fff" (default: derived from the name)
+#   enabled    false to pause without deleting
+#   filters    include / exclude lists of case-insensitive regexes
+#   selectors  required for html and json sources, see the bottom of this file
+#   headers    extra HTTP headers, e.g. a cookie or API key
+# ---------------------------------------------------------------------------
+
+# Optional: give channel IDs a name so sources read nicely.
+# Right-click a channel in Discord > Copy Channel ID (needs Developer Mode).
+channels: {}
+#  slovenija: 123456789012345678
+#  tech: 123456789012345678
+
+defaults:
+  interval: 600
+  max_items: 5
+
+sources:
+  # --- Slovenija -----------------------------------------------------------
+  - name: Slo-Tech
+    url: https://slo-tech.com/rss
+    color: "#c0392b"
+
+  - name: RTV SLO
+    url: https://img.rtvslo.si/feeds/00.xml
+
+  - name: RTV SLO Znanost in tehnologija
+    url: https://img.rtvslo.si/feeds/16.xml
+
+  - name: 24ur
+    url: https://www.24ur.com/rss
+
+  - name: N1 Slovenija
+    url: https://n1info.si/feed/
+
+  - name: Racunalniske novice
+    url: https://www.racunalniske-novice.com/feed
+
+  # --- Tech ----------------------------------------------------------------
+  - name: Hacker News
+    url: https://hnrss.org/frontpage
+    color: "#ff6600"
+    interval: 900
+
+  - name: Lobsters
+    url: https://lobste.rs/rss
+    interval: 900
+
+  - name: Ars Technica
+    url: https://feeds.arstechnica.com/arstechnica/index
+
+  - name: The Verge
+    url: https://www.theverge.com/rss/index.xml
+
+  - name: Phoronix
+    url: https://www.phoronix.com/rss.php
+
+  - name: Hackaday
+    url: https://hackaday.com/blog/feed/
+
+  - name: GitHub Blog
+    url: https://github.blog/feed/
+    interval: 3600
+
+  # --- Filtering example ---------------------------------------------------
+  # Only posts matching "include" get through; anything matching "exclude" is
+  # dropped first. Both are regexes, matched against title + summary.
+  #
+  # - name: Slo-Tech Novice
+  #   url: https://slo-tech.com/rss
+  #   filters:
+  #     include:
+  #       - "linux|nvidia|amd"
+  #     exclude:
+  #       - "oglasno sporocilo"
+
+  # --- Sites without a feed ------------------------------------------------
+  # "item" selects each card on the page, the rest are read inside it.
+  # "sel@attr" reads an attribute, plain "sel" reads text, "@attr" reads the
+  # item element itself. Relative links are resolved against "url".
+  #
+  # - name: Example Blog
+  #   url: https://example.com/news
+  #   type: html
+  #   selectors:
+  #     item: "article.post"
+  #     title: "h2 a"
+  #     link: "h2 a@href"
+  #     summary: "p.excerpt"
+  #     image: "img@src"
+  #     published: "time@datetime"
+
+  # --- JSON endpoints ------------------------------------------------------
+  # Selectors are dotted paths; "item" points at the list.
+  #
+  # - name: Example API
+  #   url: https://example.com/api/posts
+  #   type: json
+  #   selectors:
+  #     item: "data.posts"
+  #     title: "headline"
+  #     link: "permalink"
+  #     summary: "excerpt"
+  #     published: "published_at"
