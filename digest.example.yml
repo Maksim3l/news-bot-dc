@@ -29,10 +29,10 @@ timezone: Europe/Ljubljana
 provider: ollama
 
 # Ollama tag. A mixture-of-experts model with 3B active parameters, so it runs
-# at usable speed on a CPU with no GPU; needs about 20 GB of RAM while it runs.
-# Check the exact tag at https://ollama.com/library/qwen3.6 before the first run.
+# at usable speed on a CPU with no GPU; needs about 25 GB of RAM while it runs.
+# Tags are listed at https://ollama.com/library/qwen3.6 (27b is dense and much slower on CPU).
 # For provider: anthropic use a Claude model ID such as claude-haiku-5-5.
-model: qwen3.6:35b-a3b
+model: qwen3.6:35b
 
 ollama:
   # Overridden by OLLAMA_URL in .env and by docker compose.

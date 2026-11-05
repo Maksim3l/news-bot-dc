@@ -14,8 +14,8 @@ case "$(uname -s)" in
         exit 1 ;;
 esac
 
-MIN_RAM_GB=24          # the default model needs about 20 GB while the digest builds
-DEFAULT_MODEL="qwen3.6:35b-a3b"
+MIN_RAM_GB=28          # the default model needs about 25 GB while the digest builds
+DEFAULT_MODEL="qwen3.6:35b"
 
 say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 fail() { printf '\nerror: %s\n' "$*" >&2; exit 1; }
@@ -114,7 +114,7 @@ chmod 600 .env
 # 3. Model
 # ---------------------------------------------------------------------------
 current_model=$(grep -E '^model:' digest.yml | head -n1 | sed -E 's/^model:[[:space:]]*//')
-say "Ollama model for the daily digest. Check the tag exists at https://ollama.com/library/qwen3.6"
+say "Ollama model for the daily digest. Tags: https://ollama.com/library/qwen3.6"
 read -r -p "Model tag [${current_model:-$DEFAULT_MODEL}]: " model < /dev/tty
 if [ -n "$model" ]; then
     sed -i -E "s|^model:.*|model: $model|" digest.yml
@@ -122,7 +122,7 @@ fi
 
 ram_gb=$(awk '/MemTotal/ {printf "%d", $2 / 1048576}' /proc/meminfo)
 if [ "$ram_gb" -lt "$MIN_RAM_GB" ]; then
-    say "This machine has ${ram_gb} GB of RAM; the default model needs about 20 GB free while the digest builds."
+    say "This machine has ${ram_gb} GB of RAM; the default model needs about 25 GB free while the digest builds."
 fi
 
 # ---------------------------------------------------------------------------
@@ -131,7 +131,7 @@ fi
 say "Building and starting the bot and Ollama"
 "${DOCKER[@]}" compose up -d --build
 
-say "Running. The bot downloads the model on first start (about 20 GB, once)."
+say "Running. The bot downloads the model on first start (about 23 GB, once)."
 cat <<DONE
   Logs:          ${DOCKER[*]} compose logs -f newsbot
   Test feeds:    ${DOCKER[*]} compose run --rm newsbot python -m newsbot check

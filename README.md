@@ -32,7 +32,7 @@ Double-click `setup.cmd`. It checks Docker Desktop (and offers to install it wit
 
 ### What you need
 
-- Ubuntu or Windows with Docker Desktop, about 24 GB of RAM, so the default model's 20 GB fits while the digest builds, and about 25 GB of free disk for the model.
+- Ubuntu or Windows with Docker Desktop, about 28 GB of RAM, so the default model's 25 GB fits while the digest builds, and about 30 GB of free disk for the model.
 - A Discord bot token, the channel ID to post in, and optionally your server ID and the bot's application ID. They come from these places:
 
 1. **Bot token**: https://discord.com/developers/applications, **New Application**, give it a name. Open **Bot**, press **Reset Token**, copy it. Discord shows it only once; if you lose it, reset again. Anyone with the token controls the bot, so it only goes in `.env`.
@@ -200,7 +200,7 @@ Picked articles are never picked again, and each day posts at most once even acr
 
 ### Model
 
-The default is `qwen3.6:35b-a3b` on Ollama: 35B parameters, 3B used per token, so it runs on a CPU without a GPU. It needs about 20 GB of RAM during the build and none outside it. The bot unloads it as soon as the build ends.
+The default is `qwen3.6:35b` on Ollama: 35B parameters, 3B used per token, so it runs on a CPU without a GPU. It needs about 25 GB of RAM during the build and none outside it. The bot unloads it as soon as the build ends.
 
 A day is three to five requests. With `max_candidates: 150` and `summary_chars: 100` the largest prompt is roughly 10k tokens. The bot logs reading and writing speed for every request (`ollama: read N tokens at X tok/s`), so after the first run you can see how much of the 90-minute window the build uses, then trade `max_candidates` and `summary_chars` against it.
 
@@ -278,9 +278,9 @@ make docker
 That copies any missing templates first, then runs `docker compose up -d --build`, which starts two containers:
 
 - `newsbot`, which reads `.env` and mounts `sources.yml`, `digest.yml` and `data/` from the host. Every setting stays local: edit the files, then `/reload` (YAML) or `docker compose restart` (`.env`).
-- `ollama`, reachable only by the bot. Models live in the `ollama` volume, so the roughly 20 GB download happens once. On first start the bot asks it to download the configured model; follow it with `docker compose logs -f newsbot`.
+- `ollama`, reachable only by the bot. Models live in the `ollama` volume, so the roughly 23 GB download happens once. On first start the bot asks it to download the configured model; follow it with `docker compose logs -f newsbot`.
 
-On Windows instead of Ubuntu, Docker Desktop gives its VM half the PC's RAM by default. The model needs about 20 GB of that.
+On Windows instead of Ubuntu, Docker Desktop gives its VM half the PC's RAM by default. The model needs about 25 GB of that.
 
 Create `sources.yml` and `digest.yml` before the first `docker compose up`. If they are missing, docker creates empty directories with those names and the bot stops with a message saying so.
 

@@ -45,7 +45,7 @@ def make_config(**overrides: Any) -> DigestConfig:
         post_at=time(8, 0),
         timezone=ZoneInfo("Europe/Ljubljana"),
         provider="ollama",
-        model="qwen3.6:35b-a3b",
+        model="qwen3.6:35b",
         effort="medium",
         refusal_fallback=False,
         window_hours=24,
@@ -405,7 +405,7 @@ async def test_ollama_model_sends_schema_and_unloads(aiohttp_server_factory) -> 
     from newsbot.digest.llm import OllamaJsonModel
 
     seen: list[tuple[str, dict]] = []
-    server = await aiohttp_server_factory(seen, models=["qwen3.6:35b-a3b"])
+    server = await aiohttp_server_factory(seen, models=["qwen3.6:35b"])
     config = make_config(ollama=OllamaSettings(url=str(server.make_url("")).rstrip("/"), num_thread=8))
     async with aiohttp.ClientSession() as session:
         model = OllamaJsonModel(config, session)
@@ -417,7 +417,7 @@ async def test_ollama_model_sends_schema_and_unloads(aiohttp_server_factory) -> 
     chat = next(body for path, body in seen if path == "/api/chat")
     assert chat["format"] == {"type": "object"} and chat["stream"] is False and chat["think"] is False
     assert chat["options"] == {"temperature": 0, "num_ctx": 16384, "num_thread": 8}
-    assert ("/api/generate", {"model": "qwen3.6:35b-a3b", "keep_alive": 0}) in seen
+    assert ("/api/generate", {"model": "qwen3.6:35b", "keep_alive": 0}) in seen
     assert all(path != "/api/pull" for path, _ in seen)  # already present
 
 
@@ -434,7 +434,7 @@ async def test_ollama_pulls_missing_model_and_reports_truncation(aiohttp_server_
         await model.ensure_model()
         with pytest.raises(DigestError, match="num_ctx"):
             await model.ask("sys", "prompt", {"type": "object"})
-    assert ("/api/pull", {"model": "qwen3.6:35b-a3b", "stream": False}) in seen
+    assert ("/api/pull", {"model": "qwen3.6:35b", "stream": False}) in seen
 
 
 async def test_build_still_running_at_deadline_is_stopped() -> None:

@@ -25,7 +25,7 @@ services:
       # One model at a time; the bot unloads it after each build.
       OLLAMA_MAX_LOADED_MODELS: "1"
     volumes:
-      # Downloaded models (about 20 GB for the default) survive rebuilds.
+      # Downloaded models (about 23 GB for the default) survive rebuilds.
       - ollama:/root/.ollama
     # No ports published: only the bot talks to it, over the compose network.
 

@@ -14,7 +14,7 @@ from newsbot.config import ConfigError, Settings, load_channel_aliases, read_yam
 
 PROVIDERS = {"ollama", "anthropic"}
 DEFAULT_PROVIDER = "ollama"
-DEFAULT_MODELS = {"ollama": "qwen3.6:35b-a3b", "anthropic": "claude-haiku-5-5"}
+DEFAULT_MODELS = {"ollama": "qwen3.6:35b", "anthropic": "claude-haiku-5-5"}
 # Models that accept fallbacks="default". Others (Haiku 5.5 included) get a 400 if it is sent.
 FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}

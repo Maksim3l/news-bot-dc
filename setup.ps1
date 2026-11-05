@@ -6,8 +6,8 @@
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
-$MinVmGb = 22          # the default model needs about 20 GB inside Docker's VM
-$DefaultModel = "qwen3.6:35b-a3b"
+$MinVmGb = 26          # the default model needs about 25 GB inside Docker's VM
+$DefaultModel = "qwen3.6:35b"
 $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
 function Say($text) { Write-Host ""; Write-Host $text -ForegroundColor Cyan }
@@ -114,7 +114,7 @@ $digest = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "digest.yml"))
 $current = ""
 if ($digest -match '(?m)^model:[ \t]*(\S+)') { $current = $Matches[1] }
 if (-not $current) { $current = $DefaultModel }
-Say "Ollama model for the daily digest. Check the tag exists at https://ollama.com/library/qwen3.6"
+Say "Ollama model for the daily digest. Tags: https://ollama.com/library/qwen3.6"
 $model = (Read-Host "Model tag [$current]").Trim()
 if ($model) {
     $digest = [regex]::Replace($digest, '(?m)^model:.*$', "model: $model")
@@ -126,7 +126,7 @@ $vmBytes = [int64](& docker info --format "{{.MemTotal}}" 2> $null)
 $ErrorActionPreference = $previous
 $vmGb = [math]::Floor($vmBytes / 1GB)
 if ($vmGb -lt $MinVmGb) {
-    Say "Docker's VM has $vmGb GB of RAM; the default model needs about 20 GB while the digest builds."
+    Say "Docker's VM has $vmGb GB of RAM; the default model needs about 25 GB while the digest builds."
     Write-Host "  Raise it in %UserProfile%\.wslconfig:  [wsl2]  memory=32GB  then run: wsl --shutdown"
 }
 
@@ -138,7 +138,7 @@ $ErrorActionPreference = "Continue"
 & docker compose up -d --build
 if ($LASTEXITCODE -ne 0) { Fail "docker compose up failed; the output above says why" }
 
-Say "Running. The bot downloads the model on first start (about 20 GB, once)."
+Say "Running. The bot downloads the model on first start (about 23 GB, once)."
 Write-Host "  Logs:          docker compose logs -f newsbot"
 Write-Host "  Test feeds:    docker compose run --rm newsbot python -m newsbot check"
 Write-Host "  Test digest:   docker compose run --rm newsbot python -m newsbot digest"
