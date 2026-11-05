@@ -3,7 +3,7 @@
 A Discord bot that watches websites and posts to your channels in two ways:
 
 - **Live**: anything new from a source is posted as it appears.
-- **Daily digest**: once a day a Claude model reads everything collected in the last 24 hours and picks at most one article per category (by default "tech and research" and "good news"), or none when nothing is good enough. Slovenian picks get an English article on the same story linked under them, and the digest ends with a line from The Office that fits the day's picks.
+- **Daily digest**: once a day a local model (Ollama) reads everything collected in the last 24 hours and picks at most one article per category (by default "tech and research" and "good news"), or none when nothing is good enough. Slovenian picks get an English article on the same story linked under them, and the digest ends with a line from The Office that fits the day's picks.
 
 Feeds, plain HTML pages and JSON endpoints all work. Every setting lives in three local files made from templates: `.env`, `sources.yml` and `digest.yml`.
 
@@ -24,7 +24,7 @@ make setup
 
 1. Open https://discord.com/developers/applications, create an application, open **Bot**, press **Reset Token**, copy it into `DISCORD_TOKEN` in `.env`.
 2. In Discord turn on **User Settings > Advanced > Developer Mode**, right-click the channel you want, **Copy Channel ID**, paste it into `DISCORD_CHANNEL_ID`.
-3. Get an API key at https://console.anthropic.com and paste it into `ANTHROPIC_API_KEY`. Only the digest needs it.
+3. Nothing to do for the model with docker: compose runs Ollama next to the bot and downloads the model on first start. Without docker, install Ollama yourself; `OLLAMA_URL` in `.env` points at it.
 4. Optional: copy **General Information > Application ID** into `DISCORD_APPLICATION_ID`; the bot then logs a ready invite link on startup.
 5. Invite the bot: **OAuth2 > URL Generator**, scopes `bot` and `applications.commands`, permissions `Send Messages` and `Embed Links`. Open the generated URL.
 6. Start it:
@@ -167,7 +167,17 @@ A Google News search feed works for any site or keyword. The template reads GZS 
 
 ## Daily digest
 
-Every fetched item goes into a pool, whether or not it is posted live. At `post_at` the bot sends the last `window_hours` of the pool to the model in one request and asks for at most one article per category. Then:
+Collecting uses no model: every fetched item goes into a pool, whether or not it is posted live. The model runs once a day inside a fixed window:
+
+| Time (default) | What happens |
+| --- | --- |
+| `build_at` 05:00 | Model loads, reads the pool, picks, finds English links and the quote |
+| `build_deadline` 06:30 | Anything still running is stopped; the model is unloaded either way |
+| `post_at` 08:00 | The stored digest is posted. No model involved |
+
+The built digest is stored in `data/`, so a restart between build and post time still posts it. If the bot was off for the whole build window, that day is skipped rather than built during working hours.
+
+The build sends the last `window_hours` of the pool to the model in one request and asks for at most one article per category. Then:
 
 1. A category with `prefer` patterns is filled by a matching article whenever one exists, whatever the model chose. The template makes anything mentioning Dewesoft win the tech slot.
 2. For each non-English pick, an English article from the pool is used if the model found one covering the same story. Otherwise the bot searches Google News in English and the model checks which result is the same story, or none.
@@ -175,7 +185,13 @@ Every fetched item goes into a pool, whether or not it is posted live. At `post_
 
 Picked articles are never picked again, and each day posts at most once even across restarts.
 
-A day uses three to five requests, about 50k input tokens in total with a 400-article pool. On Haiku 5.5 that is well under a cent a day.
+### Model
+
+The default is `qwen3.6:35b-a3b` on Ollama: 35B parameters, 3B used per token, so it runs on a CPU without a GPU. It needs about 20 GB of RAM during the build and none outside it. The bot unloads it as soon as the build ends.
+
+A day is three to five requests. With `max_candidates: 150` and `summary_chars: 100` the largest prompt is roughly 10k tokens. The bot logs reading and writing speed for every request (`ollama: read N tokens at X tok/s`), so after the first run you can see how much of the 90-minute window the build uses, then trade `max_candidates` and `summary_chars` against it.
+
+`provider: anthropic` with a Claude model ID and `ANTHROPIC_API_KEY` in `.env` runs the same steps through the Claude API instead.
 
 Categories are plain data in `digest.yml`:
 
@@ -205,7 +221,7 @@ Add, remove or reword categories there and run `/reload`. The rest of the file (
 | `/resume name` | Manage Server | Resumes a paused site |
 | `/pollnow [name]` | Manage Server | Polls one site or all of them immediately |
 | `/reload` | Manage Server | Re-reads `sources.yml` and `digest.yml` from disk |
-| `/digest [post]` | Manage Server | Builds today's digest now; shows it only to you unless `post:true` |
+| `/digest [post] [rebuild]` | Manage Server | Shows today's stored digest only to you (builds it first if there is none); `post:true` posts it, `rebuild:true` runs the model again |
 
 ## Settings
 
@@ -215,7 +231,8 @@ Everything in `.env` except the first two values has a working default.
 | --- | --- | --- |
 | `DISCORD_TOKEN` | required | Bot token |
 | `DISCORD_CHANNEL_ID` | required unless every source names a channel | Default channel |
-| `ANTHROPIC_API_KEY` | required for the digest | Claude API key |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama for the digest; docker compose overrides it with its own container |
+| `ANTHROPIC_API_KEY` | empty | Only for `provider: anthropic` in `digest.yml` |
 | `DISCORD_GUILD_ID` | empty | Set it for instant slash command registration |
 | `DISCORD_APPLICATION_ID` | empty | Bot application ID; enables the invite link in the log |
 | `SOURCES_FILE` | `sources.yml` | Watch list location |
@@ -245,7 +262,12 @@ Each source polls on its own timer in its own task. One broken selector or one s
 make docker
 ```
 
-That copies any missing templates first, then runs `docker compose up -d --build`. The container reads `.env` and mounts `sources.yml`, `digest.yml` and `data/` from the host, so every setting stays local: edit the files, then `/reload` (YAML) or `docker compose restart` (`.env`). The databases in `data/` survive rebuilds.
+That copies any missing templates first, then runs `docker compose up -d --build`, which starts two containers:
+
+- `newsbot`, which reads `.env` and mounts `sources.yml`, `digest.yml` and `data/` from the host. Every setting stays local: edit the files, then `/reload` (YAML) or `docker compose restart` (`.env`).
+- `ollama`, reachable only by the bot. Models live in the `ollama` volume, so the roughly 20 GB download happens once. On first start the bot asks it to download the configured model; follow it with `docker compose logs -f newsbot`.
+
+On Windows, Docker Desktop gives its VM half the PC's RAM by default. The model needs about 20 GB of that.
 
 Create `sources.yml` and `digest.yml` before the first `docker compose up`. If they are missing, docker creates empty directories with those names and the bot stops with a message saying so.
 
@@ -283,13 +305,14 @@ newsbot/
   digest/
     config.py     digest.yml into typed settings
     pool.py       every fetched item, stored for the daily pick
-    llm.py        the only module calling the Claude API
+    llm.py        the only module calling a model (Ollama or Claude API)
     select.py     one article per category, preferred patterns enforced
     english.py    English coverage for non-English picks
     quotes.py     Office transcript search and quote verification
     builder.py    runs the steps in order
+    codec.py      stores a built digest until post time
     render.py     digest to Discord embeds or plain text
-    scheduler.py  fires once a day at post_at
+    scheduler.py  build window and post time
   bot.py          the Discord client
   commands.py     slash commands
   __main__.py     run, check and digest entry points

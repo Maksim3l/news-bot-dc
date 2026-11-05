@@ -12,7 +12,6 @@ from newsbot.digest.pool import Candidate
 
 log = logging.getLogger(__name__)
 
-SUMMARY_CHARS = 220
 NONE = -1
 
 SYSTEM = """You are the editor of a small daily news digest posted to a Discord server.
@@ -76,10 +75,11 @@ def build_prompt(candidates: list[Candidate], config: DigestConfig) -> str:
     lines += ["", f"Articles ({len(candidates)}):"]
     for index, candidate in enumerate(candidates):
         date = candidate.published.date().isoformat() if candidate.published else "undated"
-        summary = candidate.summary[:SUMMARY_CHARS]
+        summary = candidate.summary[: config.summary_chars] if config.summary_chars else ""
         marks = preferred_for(candidate, config.categories)
         flag = f" PREFERRED for {', '.join(marks)}" if marks else ""
-        lines.append(f"[{index}] ({candidate.language}, {candidate.source}, {date}){flag} {candidate.title} | {summary}")
+        tail = f" | {summary}" if summary else ""
+        lines.append(f"[{index}] ({candidate.language}, {candidate.source}, {date}){flag} {candidate.title}{tail}")
     return "\n".join(lines)
 
 

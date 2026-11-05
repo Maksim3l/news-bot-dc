@@ -1,38 +1,87 @@
-"""Fires the digest once a day at post_at in the configured time zone."""
+"""Daily timing: build between build_at and build_deadline, post the stored digest at post_at.
+
+Building is the only step that uses the model, so the machine is busy only inside the build window.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
 
 from newsbot.digest.config import DigestConfig
 
 log = logging.getLogger(__name__)
 
 RETRY_SECONDS = 600
-ATTEMPTS = 3
 
 
-def seconds_until(config: DigestConfig, now: datetime | None = None) -> float:
-    now = now or datetime.now(config.timezone)
-    target = now.replace(hour=config.post_at.hour, minute=config.post_at.minute, second=0, microsecond=0)
-    if target <= now:
-        target = (target + timedelta(days=1)).replace(tzinfo=config.timezone)
-    # Subtracting in UTC: same-zone subtraction ignores a DST change in between and lands an hour off.
-    return (target.astimezone(timezone.utc) - now.astimezone(timezone.utc)).total_seconds()
+@dataclass(slots=True)
+class DayState:
+    built: bool
+    posted: bool
+
+
+@dataclass(slots=True)
+class Step:
+    action: str  # "wait", "build" or "post"
+    seconds: float = 0.0
+
+
+def at(config: DigestConfig, day: date, clock: time) -> datetime:
+    return datetime.combine(day, clock, tzinfo=config.timezone)
+
+
+def between(start: datetime, end: datetime) -> float:
+    # In UTC: same-zone subtraction ignores a DST change in between and lands an hour off.
+    return (end.astimezone(timezone.utc) - start.astimezone(timezone.utc)).total_seconds()
+
+
+def next_step(config: DigestConfig, now: datetime, state: DayState) -> Step:
+    today = now.date()
+    build_at = at(config, today, config.build_at)
+    deadline = at(config, today, config.build_deadline)
+    post_at = at(config, today, config.post_at)
+    tomorrow_build = at(config, today + timedelta(days=1), config.build_at)
+
+    if state.posted:
+        return Step("wait", between(now, tomorrow_build))
+    if not state.built:
+        if now < build_at:
+            return Step("wait", between(now, build_at))
+        if now < deadline:
+            return Step("build")
+        # Missed the window (bot was off, or the build failed every time): skip the day rather than
+        # loading the model during working hours.
+        return Step("wait", between(now, tomorrow_build))
+    if now < post_at:
+        return Step("wait", between(now, post_at))
+    return Step("post")
 
 
 class DailyScheduler:
-    def __init__(self, config: DigestConfig, run: Callable[[], Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        config: DigestConfig,
+        state: Callable[[date], Awaitable[DayState]],
+        build: Callable[[], Awaitable[None]],
+        post: Callable[[], Awaitable[None]],
+    ) -> None:
         self._config = config
-        self._run = run
+        self._state = state
+        self._build = build
+        self._post = post
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop(), name="digest")
-        log.info("digest scheduled daily at %s %s", self._config.post_at.strftime("%H:%M"), self._config.timezone.key)
+        c = self._config
+        log.info(
+            "digest: build %s-%s, post %s (%s)",
+            f"{c.build_at:%H:%M}", f"{c.build_deadline:%H:%M}", f"{c.post_at:%H:%M}", c.timezone.key,
+        )
 
     async def stop(self) -> None:
         if self._task:
@@ -42,15 +91,33 @@ class DailyScheduler:
 
     async def _loop(self) -> None:
         while True:
-            await asyncio.sleep(seconds_until(self._config))
-            # A failed run (API down, network) retries a few times before giving up on the day.
-            for attempt in range(1, ATTEMPTS + 1):
-                try:
-                    await self._run()
-                    break
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    log.exception("digest run failed (attempt %d of %d)", attempt, ATTEMPTS)
-                    if attempt < ATTEMPTS:
-                        await asyncio.sleep(RETRY_SECONDS)
+            now = datetime.now(self._config.timezone)
+            step = next_step(self._config, now, await self._state(now.date()))
+            if step.action == "wait":
+                await asyncio.sleep(max(step.seconds, 1))
+            elif step.action == "build":
+                await self._run_build(now)
+            else:
+                await self._run_post()
+
+    async def _run_build(self, now: datetime) -> None:
+        budget = between(now, at(self._config, now.date(), self._config.build_deadline))
+        try:
+            await asyncio.wait_for(self._build(), timeout=budget)
+        except TimeoutError:
+            log.error("digest build was still running at %s and was stopped; no digest today",
+                      f"{self._config.build_deadline:%H:%M}")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("digest build failed")
+            await asyncio.sleep(min(RETRY_SECONDS, max(budget, 1)))
+
+    async def _run_post(self) -> None:
+        try:
+            await self._post()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("digest post failed, retrying in %d s", RETRY_SECONDS)
+            await asyncio.sleep(RETRY_SECONDS)

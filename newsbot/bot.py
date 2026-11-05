@@ -11,12 +11,13 @@ from discord.ext import commands
 
 from newsbot.commands import setup_commands
 from newsbot.config import ConfigError, Settings, SourceConfig, load_sources
+from newsbot.digest import codec
 from newsbot.digest.builder import Digest, DigestBuilder
 from newsbot.digest.config import DigestConfig, load_digest
-from newsbot.digest.llm import ClaudeJsonModel
+from newsbot.digest.llm import DigestError, JsonModel, make_model
 from newsbot.digest.pool import CandidatePool
 from newsbot.digest.render import build_digest_embeds, digest_heading
-from newsbot.digest.scheduler import DailyScheduler
+from newsbot.digest.scheduler import DailyScheduler, DayState
 from newsbot.http import build_session
 from newsbot.models import Item
 from newsbot.poller import Poller
@@ -47,7 +48,9 @@ class NewsBot(commands.Bot):
         self.digest_config: DigestConfig | None = None
         self.pool: CandidatePool | None = None
         self.digest_builder: DigestBuilder | None = None
+        self.digest_model: JsonModel | None = None
         self.scheduler: DailyScheduler | None = None
+        self._model_check: asyncio.Task[None] | None = None
 
     async def setup_hook(self) -> None:
         self.sources = load_sources(self.settings)
@@ -118,10 +121,29 @@ class NewsBot(commands.Bot):
             return
         await asyncio.to_thread(self.pool.add, items, source.language, self.digest_config.max_age_hours)
 
-    async def build_digest(self) -> Digest:
+    def _require_builder(self) -> DigestBuilder:
         if self.digest_builder is None:
             raise ConfigError(f"the digest is off: {self.settings.digest_file} is missing or has enabled: false")
-        return await self.digest_builder.build()
+        return self.digest_builder
+
+    async def build_digest(self) -> Digest:
+        """Builds today's digest with the model and stores it for post time."""
+        builder = self._require_builder()
+        digest = await builder.build()
+        await asyncio.to_thread(self.pool.save_built, digest.day.isoformat(), codec.dump(digest))
+        log.info("digest %s built: %d pick(s) from %d articles", digest.day, len(digest.entries), digest.considered)
+        return digest
+
+    async def stored_digest(self) -> Digest | None:
+        builder = self._require_builder()
+        payload = await asyncio.to_thread(self.pool.built_payload, builder.today().isoformat())
+        return codec.load(payload, builder.config) if payload else None
+
+    async def digest_state(self, day) -> DayState:
+        iso = day.isoformat()
+        built = await asyncio.to_thread(self.pool.built_payload, iso)
+        posted = await asyncio.to_thread(self.pool.is_posted, iso)
+        return DayState(built=built is not None, posted=posted)
 
     async def post_digest(self, digest: Digest) -> bool:
         """Sends the digest and remembers its picks. False when nothing was sent."""
@@ -142,15 +164,13 @@ class NewsBot(commands.Bot):
         await asyncio.to_thread(builder.mark_posted, digest)
         return True
 
-    async def run_daily_digest(self) -> None:
-        builder = self.digest_builder
-        if builder is None or self.pool is None:
+    async def scheduled_build(self) -> None:
+        await self.build_digest()
+
+    async def scheduled_post(self) -> None:
+        digest = await self.stored_digest()
+        if digest is None:
             return
-        day = builder.today().isoformat()
-        if await asyncio.to_thread(self.pool.has_run, day):
-            log.info("digest %s already posted, skipping", day)
-            return
-        digest = await self.build_digest()
         await self.post_digest(digest)
         await asyncio.to_thread(self.pool.prune, self.digest_config.keep_days)
 
@@ -164,15 +184,29 @@ class NewsBot(commands.Bot):
             log.info("daily digest is disabled in %s", self.settings.digest_file)
             return
         self.digest_config = config
-        self.digest_builder = DigestBuilder(config, self.pool, ClaudeJsonModel(config), self.http_session)
+        self.digest_model = make_model(config, self.http_session)
+        self.digest_builder = DigestBuilder(config, self.pool, self.digest_model, self.http_session)
+        ensure = getattr(self.digest_model, "ensure_model", None)
+        if ensure is not None:
+            self._model_check = asyncio.create_task(self._ensure_model(ensure), name="digest-model")
+
+    async def _ensure_model(self, ensure) -> None:
+        try:
+            await ensure()
+        except DigestError as exc:
+            log.error("digest model not ready: %s", exc)
 
     def _start_scheduler(self) -> None:
         self.scheduler = None
         if self.digest_config is not None:
-            self.scheduler = DailyScheduler(self.digest_config, self.run_daily_digest)
+            self.scheduler = DailyScheduler(
+                self.digest_config, self.digest_state, self.scheduled_build, self.scheduled_post
+            )
             self.scheduler.start()
 
     async def close(self) -> None:
+        if self._model_check and not self._model_check.done():
+            self._model_check.cancel()
         if self.scheduler:
             await self.scheduler.stop()
         if self.poller:

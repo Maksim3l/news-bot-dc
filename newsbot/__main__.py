@@ -49,7 +49,10 @@ def describe_digest(settings: Settings) -> str:
     if not config.enabled:
         return "digest off (enabled: false)"
     keys = ", ".join(category.key for category in config.categories)
-    return f"digest daily at {config.post_at:%H:%M} {config.timezone.key}, model {config.model}, categories: {keys}"
+    return (
+        f"digest built {config.build_at:%H:%M}-{config.build_deadline:%H:%M}, posted {config.post_at:%H:%M} "
+        f"{config.timezone.key}, {config.provider} model {config.model}, categories: {keys}"
+    )
 
 
 async def check(names: list[str]) -> int:
@@ -91,7 +94,7 @@ async def dry_run_digest() -> int:
     """Fills the pool from every source once, then prints the digest. Posts and records nothing."""
     from newsbot.digest.builder import DigestBuilder
     from newsbot.digest.config import load_digest
-    from newsbot.digest.llm import ClaudeJsonModel
+    from newsbot.digest.llm import make_model
     from newsbot.digest.pool import CandidatePool
     from newsbot.digest.render import digest_text
 
@@ -111,7 +114,10 @@ async def dry_run_digest() -> int:
             added = pool.add(items, source.language, config.max_age_hours)
             print(f"pool  {source.name}: {len(items)} fetched, {added} new")
         print()
-        digest = await DigestBuilder(config, pool, ClaudeJsonModel(config), session).build()
+        model = make_model(config, session)
+        if hasattr(model, "ensure_model"):
+            await model.ensure_model()
+        digest = await DigestBuilder(config, pool, model, session).build()
         print(digest_text(digest))
     finally:
         await session.close()

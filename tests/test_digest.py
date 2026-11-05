@@ -10,12 +10,13 @@ import pytest
 
 from newsbot.config import ConfigError, Settings
 from newsbot.digest import english as english_module
+from newsbot.digest import codec
 from newsbot.digest.builder import DigestBuilder
-from newsbot.digest.config import Category, DigestConfig, load_digest
+from newsbot.digest.config import Category, DigestConfig, OllamaSettings, load_digest
 from newsbot.digest.pool import CandidatePool
 from newsbot.digest.quotes import Line, QuoteBook
 from newsbot.digest.render import build_digest_embeds, digest_text
-from newsbot.digest.scheduler import seconds_until
+from newsbot.digest.scheduler import DayState, next_step
 from newsbot.digest.select import build_prompt, parse_selection, shortlist
 from newsbot.models import Item
 
@@ -39,14 +40,18 @@ def make_config(**overrides: Any) -> DigestConfig:
     values: dict[str, Any] = dict(
         enabled=True,
         channel_id=1,
+        build_at=time(5, 0),
+        build_deadline=time(6, 30),
         post_at=time(8, 0),
         timezone=ZoneInfo("Europe/Ljubljana"),
-        model="claude-haiku-5-5",
+        provider="ollama",
+        model="qwen3.6:35b-a3b",
         effort="medium",
         refusal_fallback=False,
         window_hours=24,
         max_age_hours=48,
         max_candidates=400,
+        summary_chars=100,
         keep_days=14,
         post_when_empty=False,
         quality_bar="",
@@ -67,6 +72,42 @@ def item(source: str, title: str, hours_ago: float = 1, summary: str = "") -> It
         summary=summary,
         published=NOW - timedelta(hours=hours_ago),
     )
+
+
+@pytest.fixture
+async def aiohttp_server_factory():
+    """A stand-in Ollama: records request bodies and answers like the real API."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+
+    servers: list[TestServer] = []
+
+    async def factory(seen: list, models: list[str], done_reason: str = "stop") -> TestServer:
+        async def tags(request: web.Request) -> web.Response:
+            return web.json_response({"models": [{"name": name} for name in models]})
+
+        async def record(request: web.Request) -> web.Response:
+            body = await request.json()
+            seen.append((request.path, body))
+            if request.path == "/api/chat":
+                return web.json_response({
+                    "message": {"content": '{"ok": true}'}, "done_reason": done_reason,
+                    "prompt_eval_count": 100, "prompt_eval_duration": 10**9, "eval_count": 5, "eval_duration": 10**9,
+                })
+            return web.json_response({"status": "success"})
+
+        app = web.Application()
+        app.router.add_get("/api/tags", tags)
+        for path in ("/api/chat", "/api/pull", "/api/generate"):
+            app.router.add_post(path, record)
+        server = TestServer(app)
+        await server.start_server()
+        servers.append(server)
+        return server
+
+    yield factory
+    for server in servers:
+        await server.close()
 
 
 @pytest.fixture
@@ -105,10 +146,12 @@ def test_picked_items_never_come_back(pool: CandidatePool) -> None:
     assert all("Wolves" not in c.title for c in pool.recent(24))
 
 
-def test_run_is_recorded_once_per_day(pool: CandidatePool) -> None:
-    assert not pool.has_run("2026-11-05")
-    pool.record_run("2026-11-05")
-    assert pool.has_run("2026-11-05")
+def test_built_and_posted_are_tracked_per_day(pool: CandidatePool) -> None:
+    assert pool.built_payload("2026-11-05") is None and not pool.is_posted("2026-11-05")
+    pool.save_built("2026-11-05", "{}")
+    assert pool.built_payload("2026-11-05") == "{}" and not pool.is_posted("2026-11-05")
+    pool.mark_day_posted("2026-11-05")
+    assert pool.is_posted("2026-11-05") and pool.built_payload("2026-11-05") == "{}"
 
 
 # --- selection ----------------------------------------------------------------
@@ -244,8 +287,14 @@ async def test_build_runs_selection_english_search_and_quote(
     )
     builder = DigestBuilder(make_config(), pool, model, session=None)
     builder._book = book
+    released: list[bool] = []
 
+    async def release() -> None:
+        released.append(True)
+
+    model.release = release
     digest = await builder.build()
+    assert released == [True]  # model unloaded after the build
 
     assert [e.pick.category.key for e in digest.entries] == ["tech", "good_news"]
     assert "Slovenian+battery+range" in searched[0]
@@ -258,7 +307,10 @@ async def test_build_runs_selection_english_search_and_quote(
 
     builder.mark_posted(digest)
     assert pool.recent(24) == []
-    assert pool.has_run(digest.day.isoformat())
+    assert pool.is_posted(digest.day.isoformat())
+
+    restored = codec.load(codec.dump(digest), make_config())
+    assert codec.dump(restored) == codec.dump(digest)
 
 
 async def test_empty_pool_makes_no_model_call(pool: CandidatePool) -> None:
@@ -277,8 +329,25 @@ def test_digest_template_parses(settings: Settings) -> None:
 
     assert [c.key for c in config.categories] == ["tech", "good_news"]
     assert config.category("tech").prefer[0].search("New from DEWESoft")
-    assert config.refusal_fallback is False  # Haiku 5.5 rejects fallbacks
+    assert config.provider == "ollama" and config.refusal_fallback is False
+    assert (config.build_at, config.build_deadline, config.post_at) == (time(5), time(6, 30), time(8))
     assert config.channel_id == settings.default_channel_id
+
+
+def test_ollama_url_from_env_wins(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings.sources_file = REPOSITORY_ROOT / "sources.example.yml"
+    settings.digest_file = REPOSITORY_ROOT / "digest.example.yml"
+    monkeypatch.setenv("OLLAMA_URL", "http://ollama:11434/")
+    assert load_digest(settings).ollama.url == "http://ollama:11434"
+
+
+def test_times_out_of_order_are_rejected(settings: Settings) -> None:
+    settings.sources_file = REPOSITORY_ROOT / "sources.example.yml"
+    settings.digest_file.write_text(
+        'build_at: "07:00"\nbuild_deadline: "06:30"\ncategories:\n  - key: a\n    brief: b\n', encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="in order"):
+        load_digest(settings)
 
 
 def test_digest_rejects_category_without_brief(settings: Settings) -> None:
@@ -295,10 +364,94 @@ def test_missing_mounted_file_explains_the_directory_case(settings: Settings) ->
         load_digest(settings)
 
 
-def test_seconds_until_rolls_over_to_tomorrow() -> None:
+def clock(hour: int, minute: int = 0, day: int = 5, month: int = 11) -> datetime:
+    return datetime(2026, month, day, hour, minute, tzinfo=ZoneInfo("Europe/Ljubljana"))
+
+
+FRESH = DayState(built=False, posted=False)
+BUILT = DayState(built=True, posted=False)
+DONE = DayState(built=True, posted=True)
+
+
+def test_waits_for_build_window_then_builds() -> None:
     config = make_config()
-    zone = config.timezone
-    assert seconds_until(config, datetime(2026, 11, 5, 7, 0, tzinfo=zone)) == 3600
-    assert seconds_until(config, datetime(2026, 11, 5, 8, 0, tzinfo=zone)) == 24 * 3600
-    # Clocks go forward overnight on 29 March 2026 in Ljubljana: 08:00 is 23 real hours away.
-    assert seconds_until(config, datetime(2026, 3, 28, 8, 0, tzinfo=zone)) == 23 * 3600
+    assert next_step(config, clock(4), FRESH).seconds == 3600
+    assert next_step(config, clock(5, 10), FRESH).action == "build"
+
+
+def test_missed_build_window_skips_the_day() -> None:
+    step = next_step(make_config(), clock(6, 30), FRESH)
+    assert step.action == "wait" and step.seconds == 22.5 * 3600  # to 05:00 tomorrow
+
+
+def test_built_digest_waits_for_post_time_then_posts() -> None:
+    config = make_config()
+    assert next_step(config, clock(6), BUILT).seconds == 2 * 3600
+    assert next_step(config, clock(8), BUILT).action == "post"
+    assert next_step(config, clock(13), BUILT).action == "post"  # bot was down at 08:00
+
+
+def test_posted_day_waits_for_tomorrow_across_dst() -> None:
+    # Clocks go forward overnight on 29 March 2026 in Ljubljana: 05:00 is 20 real hours from 08:00.
+    assert next_step(make_config(), clock(8, day=28, month=3), DONE).seconds == 20 * 3600
+
+
+# --- ollama ---------------------------------------------------------------------
+
+
+async def test_ollama_model_sends_schema_and_unloads(aiohttp_server_factory) -> None:
+    import aiohttp
+
+    from newsbot.digest.llm import OllamaJsonModel
+
+    seen: list[tuple[str, dict]] = []
+    server = await aiohttp_server_factory(seen, models=["qwen3.6:35b-a3b"])
+    config = make_config(ollama=OllamaSettings(url=str(server.make_url("")).rstrip("/"), num_thread=8))
+    async with aiohttp.ClientSession() as session:
+        model = OllamaJsonModel(config, session)
+        await model.ensure_model()
+        reply = await model.ask("sys", "prompt", {"type": "object"})
+        await model.release()
+
+    assert reply == {"ok": True}
+    chat = next(body for path, body in seen if path == "/api/chat")
+    assert chat["format"] == {"type": "object"} and chat["stream"] is False and chat["think"] is False
+    assert chat["options"] == {"temperature": 0, "num_ctx": 16384, "num_thread": 8}
+    assert ("/api/generate", {"model": "qwen3.6:35b-a3b", "keep_alive": 0}) in seen
+    assert all(path != "/api/pull" for path, _ in seen)  # already present
+
+
+async def test_ollama_pulls_missing_model_and_reports_truncation(aiohttp_server_factory) -> None:
+    import aiohttp
+
+    from newsbot.digest.llm import DigestError, OllamaJsonModel
+
+    seen: list[tuple[str, dict]] = []
+    server = await aiohttp_server_factory(seen, models=[], done_reason="length")
+    config = make_config(ollama=OllamaSettings(url=str(server.make_url("")).rstrip("/")))
+    async with aiohttp.ClientSession() as session:
+        model = OllamaJsonModel(config, session)
+        await model.ensure_model()
+        with pytest.raises(DigestError, match="num_ctx"):
+            await model.ask("sys", "prompt", {"type": "object"})
+    assert ("/api/pull", {"model": "qwen3.6:35b-a3b", "stream": False}) in seen
+
+
+async def test_build_still_running_at_deadline_is_stopped() -> None:
+    import asyncio
+
+    from newsbot.digest.scheduler import DailyScheduler
+
+    finished: list[bool] = []
+
+    async def slow_build() -> None:
+        await asyncio.sleep(5)
+        finished.append(True)
+
+    async def nothing(*_args) -> None:
+        return None
+
+    scheduler = DailyScheduler(make_config(), nothing, slow_build, nothing)
+    # 50 ms before the 06:30 deadline
+    await scheduler._run_build(clock(6, 29) + timedelta(seconds=59.95))
+    assert finished == []

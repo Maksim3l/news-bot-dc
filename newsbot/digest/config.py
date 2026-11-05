@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import time
@@ -11,7 +12,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from newsbot.config import ConfigError, Settings, load_channel_aliases, read_yaml, resolve_channel
 
-DEFAULT_MODEL = "claude-haiku-5-5"
+PROVIDERS = {"ollama", "anthropic"}
+DEFAULT_PROVIDER = "ollama"
+DEFAULT_MODELS = {"ollama": "qwen3.6:35b-a3b", "anthropic": "claude-haiku-5-5"}
 # Models that accept fallbacks="default". Others (Haiku 5.5 included) get a 400 if it is sent.
 FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
@@ -42,35 +45,52 @@ class EnglishSettings:
 
 
 @dataclass(slots=True)
+class OllamaSettings:
+    url: str = "http://localhost:11434"
+    # Context window in tokens. Ollama's default is small and cuts long prompts silently.
+    num_ctx: int = 16384
+    num_thread: int | None = None
+    think: bool | None = False
+    # Seconds one request may take. CPU-only prompt reading is slow.
+    request_timeout: int = 1800
+    pull_missing: bool = True
+
+
+@dataclass(slots=True)
 class DigestConfig:
     enabled: bool
     channel_id: int
+    build_at: time
+    build_deadline: time
     post_at: time
     timezone: ZoneInfo
+    provider: str
     model: str
     effort: str
     refusal_fallback: bool
     window_hours: int
     max_age_hours: int
     max_candidates: int
+    summary_chars: int
     keep_days: int
     post_when_empty: bool
     quality_bar: str
     categories: list[Category] = field(default_factory=list)
     quote: QuoteSettings = field(default_factory=QuoteSettings)
     english: EnglishSettings = field(default_factory=EnglishSettings)
+    ollama: OllamaSettings = field(default_factory=OllamaSettings)
 
     def category(self, key: str) -> Category | None:
         return next((category for category in self.categories if category.key == key), None)
 
 
-def _parse_time(value: Any) -> time:
-    text = str(value or "08:00").strip()
+def _parse_time(value: Any, key: str, default: str) -> time:
+    text = str(value or default).strip()
     try:
         hours, minutes = text.split(":")
         return time(int(hours), int(minutes))
     except ValueError as exc:
-        raise ConfigError(f"digest post_at {text!r} must look like 08:30") from exc
+        raise ConfigError(f"digest {key} {text!r} must look like 08:30") from exc
 
 
 def _parse_zone(value: Any) -> ZoneInfo:
@@ -127,18 +147,36 @@ def load_digest(settings: Settings) -> DigestConfig:
     if enabled and not categories:
         raise ConfigError(f"{settings.digest_file} is enabled but lists no categories")
 
-    model = str(document.get("model") or DEFAULT_MODEL).strip()
+    provider = str(document.get("provider") or DEFAULT_PROVIDER).strip().lower()
+    if provider not in PROVIDERS:
+        raise ConfigError(f"digest provider {provider!r} must be one of {', '.join(sorted(PROVIDERS))}")
+    model = str(document.get("model") or DEFAULT_MODELS[provider]).strip()
+
+    build_at = _parse_time(document.get("build_at"), "build_at", "05:00")
+    build_deadline = _parse_time(document.get("build_deadline"), "build_deadline", "06:30")
+    post_at = _parse_time(document.get("post_at"), "post_at", "08:00")
+    if not build_at < build_deadline <= post_at:
+        raise ConfigError("digest times must be in order within one day: build_at < build_deadline <= post_at")
+
+    ollama_raw = dict(document.get("ollama") or {})
+    num_thread = ollama_raw.get("num_thread")
+    think = ollama_raw.get("think", False)
+
     return DigestConfig(
         enabled=enabled,
         channel_id=resolve_channel(document.get("channel"), aliases, settings.default_channel_id, "digest"),
-        post_at=_parse_time(document.get("post_at")),
+        build_at=build_at,
+        build_deadline=build_deadline,
+        post_at=post_at,
         timezone=_parse_zone(document.get("timezone")),
+        provider=provider,
         model=model,
         effort=effort,
-        refusal_fallback=bool(document.get("refusal_fallback", model in FALLBACK_MODELS)),
+        refusal_fallback=provider == "anthropic" and bool(document.get("refusal_fallback", model in FALLBACK_MODELS)),
         window_hours=int(document.get("window_hours") or 24),
         max_age_hours=int(document.get("max_age_hours") or 48),
-        max_candidates=int(document.get("max_candidates") or 400),
+        max_candidates=int(document.get("max_candidates") or 150),
+        summary_chars=int(document.get("summary_chars", 100) or 0),
         keep_days=int(document.get("keep_days") or 14),
         post_when_empty=bool(document.get("post_when_empty", False)),
         quality_bar=" ".join(str(document.get("quality_bar") or "").split()),
@@ -152,5 +190,14 @@ def load_digest(settings: Settings) -> DigestConfig:
             enabled=bool(english_raw.get("enabled", True)),
             search_url=str(english_raw.get("search_url") or GOOGLE_NEWS_EN),
             results=int(english_raw.get("results") or 8),
+        ),
+        ollama=OllamaSettings(
+            # .env wins so the same digest.yml works inside and outside docker.
+            url=(os.getenv("OLLAMA_URL") or ollama_raw.get("url") or "http://localhost:11434").rstrip("/"),
+            num_ctx=int(ollama_raw.get("num_ctx") or 16384),
+            num_thread=int(num_thread) if num_thread else None,
+            think=None if think is None else bool(think),
+            request_timeout=int(ollama_raw.get("request_timeout") or 1800),
+            pull_missing=bool(ollama_raw.get("pull_missing", True)),
         ),
     )

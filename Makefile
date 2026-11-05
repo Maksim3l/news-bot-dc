@@ -9,7 +9,7 @@ config:
 	cp -n .env.example .env || true
 	cp -n sources.example.yml sources.yml || true
 	cp -n digest.example.yml digest.yml || true
-	@echo "Now fill in DISCORD_TOKEN, DISCORD_CHANNEL_ID and ANTHROPIC_API_KEY in .env"
+	@echo "Now fill in DISCORD_TOKEN and DISCORD_CHANNEL_ID in .env"
 
 check:
 	python3 -m newsbot check

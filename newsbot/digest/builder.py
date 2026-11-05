@@ -55,6 +55,14 @@ class DigestBuilder:
         return datetime.now(self.config.timezone).date()
 
     async def build(self) -> Digest:
+        try:
+            return await self._build()
+        finally:
+            release = getattr(self._model, "release", None)
+            if release is not None:
+                await release()
+
+    async def _build(self) -> Digest:
         candidates = await asyncio.to_thread(self._pool.recent, self.config.window_hours)
         selection, listed = await select(self._model, candidates, self.config)
         digest = Digest(day=self.today(), considered=len(listed))
@@ -85,7 +93,7 @@ class DigestBuilder:
     def mark_posted(self, digest: Digest) -> None:
         day = digest.day.isoformat()
         self._pool.mark_picked([entry.pick.candidate.fingerprint for entry in digest.entries], day)
-        self._pool.record_run(day)
+        self._pool.mark_day_posted(day)
 
     async def _quote_book(self) -> QuoteBook:
         if self._book is None:

@@ -2,10 +2,29 @@ services:
   newsbot:
     build: .
     env_file: .env
+    environment:
+      # The ollama service below, by its compose name. Overrides OLLAMA_URL from .env.
+      OLLAMA_URL: http://ollama:11434
+    depends_on:
+      - ollama
     restart: unless-stopped
     volumes:
-      # Run `make setup` first: if these files do not exist on the host,
+      # Run `make config` first: if these files do not exist on the host,
       # docker creates directories in their place and the bot refuses to start.
       - ./sources.yml:/app/sources.yml
       - ./digest.yml:/app/digest.yml
       - ./data:/app/data
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      # One model at a time; the bot unloads it after each build.
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    volumes:
+      # Downloaded models (about 20 GB for the default) survive rebuilds.
+      - ollama:/root/.ollama
+    # No ports published: only the bot talks to it, over the compose network.
+
+volumes:
+  ollama:

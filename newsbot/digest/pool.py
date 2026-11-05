@@ -22,9 +22,11 @@ CREATE TABLE IF NOT EXISTS candidates (
     picked_on    TEXT
 );
 CREATE INDEX IF NOT EXISTS candidates_collected_idx ON candidates (collected_at);
-CREATE TABLE IF NOT EXISTS digest_runs (
+CREATE TABLE IF NOT EXISTS digest_days (
     run_date  TEXT PRIMARY KEY,
-    posted_at TEXT NOT NULL
+    built_at  TEXT,
+    posted_at TEXT,
+    payload   TEXT
 );
 """
 
@@ -111,15 +113,33 @@ class CandidatePool:
         )
         self._connection.commit()
 
-    def record_run(self, run_date: str) -> None:
+    def save_built(self, run_date: str, payload: str) -> None:
+        """Keeps the built digest on disk so a restart before post time does not lose it."""
         self._connection.execute(
-            "INSERT OR REPLACE INTO digest_runs (run_date, posted_at) VALUES (?, ?)",
+            "INSERT INTO digest_days (run_date, built_at, payload) VALUES (?, ?, ?) "
+            "ON CONFLICT(run_date) DO UPDATE SET built_at = excluded.built_at, payload = excluded.payload",
+            (run_date, datetime.now(timezone.utc).isoformat(), payload),
+        )
+        self._connection.commit()
+
+    def built_payload(self, run_date: str) -> str | None:
+        row = self._connection.execute(
+            "SELECT payload FROM digest_days WHERE run_date = ? AND built_at IS NOT NULL", (run_date,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def mark_day_posted(self, run_date: str) -> None:
+        self._connection.execute(
+            "INSERT INTO digest_days (run_date, posted_at) VALUES (?, ?) "
+            "ON CONFLICT(run_date) DO UPDATE SET posted_at = excluded.posted_at",
             (run_date, datetime.now(timezone.utc).isoformat()),
         )
         self._connection.commit()
 
-    def has_run(self, run_date: str) -> bool:
-        row = self._connection.execute("SELECT 1 FROM digest_runs WHERE run_date = ?", (run_date,)).fetchone()
+    def is_posted(self, run_date: str) -> bool:
+        row = self._connection.execute(
+            "SELECT 1 FROM digest_days WHERE run_date = ? AND posted_at IS NOT NULL", (run_date,)
+        ).fetchone()
         return row is not None
 
     def count(self) -> int:

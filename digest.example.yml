@@ -2,10 +2,11 @@
 # Daily digest. Template: copy it to digest.yml (`make setup` does this) and
 # edit the copy. Delete digest.yml or set enabled: false to turn the digest off.
 #
-# Every source in sources.yml feeds a pool all day. Once a day at post_at the
-# model reads the pool and picks at most one article per category, or none if
-# nothing is good enough. Non-English picks get an English article on the same
-# story linked under them. Then it picks a line from The Office that fits.
+# Every source in sources.yml feeds a pool all day; that part uses no model.
+# At build_at the model reads the pool and picks at most one article per
+# category, or none if nothing is good enough. Non-English picks get an English
+# article on the same story linked under them, then a line from The Office.
+# The finished digest is stored and posted at post_at.
 # Apply edits with /reload in Discord, or restart.
 # ---------------------------------------------------------------------------
 
@@ -15,24 +16,49 @@ enabled: true
 # Empty means DISCORD_CHANNEL_ID from .env.
 channel:
 
+# The model only runs between build_at and build_deadline. A build still
+# running at the deadline is stopped and that day has no digest, so the machine
+# is never busy during working hours. Missed windows are skipped, not caught up.
+build_at: "05:00"
+build_deadline: "06:30"
 post_at: "08:00"
 timezone: Europe/Ljubljana
 
-# Any Claude model ID. Haiku 5.5 is plenty for ranking headlines once a day.
-# claude-sonnet-5-5 if the picks feel shallow, claude-opus-5-5 for the best judgement.
-model: claude-haiku-5-5
-# low | medium | high | xhigh | max. Higher reads the list more carefully and takes longer.
+# ollama: a local model, free, runs on this machine (or the compose container).
+# anthropic: Claude API, needs ANTHROPIC_API_KEY in .env.
+provider: ollama
+
+# Ollama tag. A mixture-of-experts model with 3B active parameters, so it runs
+# at usable speed on a CPU with no GPU; needs about 20 GB of RAM while it runs.
+# Check the exact tag at https://ollama.com/library/qwen3.6 before the first run.
+# For provider: anthropic use a Claude model ID such as claude-haiku-5-5.
+model: qwen3.6:35b-a3b
+
+ollama:
+  # Overridden by OLLAMA_URL in .env and by docker compose.
+  url: http://localhost:11434
+  # Context window in tokens. Must hold the whole article list; Ollama's own
+  # default is small and cuts the prompt without an error.
+  num_ctx: 16384
+  # CPU threads. Empty uses Ollama's default (all performance cores).
+  num_thread:
+  # Reasoning before answering. Off is several times faster; ranking does not need it.
+  think: false
+  # Downloads the model on first start if Ollama does not have it.
+  pull_missing: true
+
+# Anthropic only. low | medium | high | xhigh | max.
 effort: medium
-# On Opus, Sonnet 5.5 and Fable this retries a declined request on another
-# model. Haiku 5.5 does not support it, so it defaults to off there.
-# refusal_fallback: true
 
 # Hours of collected items the digest reads.
 window_hours: 24
 # Items published longer ago than this never enter the pool.
 max_age_hours: 48
 # Most articles shown to the model. Newest are kept; preferred ones always are.
-max_candidates: 400
+# Prompt size, and so build time on CPU, grows with this and summary_chars.
+max_candidates: 150
+# Characters of each article's summary shown next to its title. 0 = titles only.
+summary_chars: 100
 # Unpicked items are forgotten after this many days.
 keep_days: 14
 # true posts a short "nothing today" message when every category came back empty.

@@ -202,13 +202,18 @@ def setup_commands(bot: "NewsBot") -> None:
             f"Reloaded {len(sources)} source(s), {len(bot.enabled_sources)} active.", ephemeral=True
         )
 
-    @app_commands.command(name="digest", description="Build today's digest now")
-    @app_commands.describe(post="Post it to the digest channel (default: only show it to you)")
+    @app_commands.command(name="digest", description="Show or post today's digest")
+    @app_commands.describe(
+        post="Post it to the digest channel (default: only show it to you)",
+        rebuild="Run the model again even if today's digest is already built (takes minutes on CPU)",
+    )
     @app_commands.default_permissions(manage_guild=True)
-    async def digest_command(interaction: discord.Interaction, post: bool = False) -> None:
+    async def digest_command(interaction: discord.Interaction, post: bool = False, rebuild: bool = False) -> None:
         await interaction.response.defer(ephemeral=True)
         try:
-            digest = await bot.build_digest()
+            digest = None if rebuild else await bot.stored_digest()
+            if digest is None:
+                digest = await bot.build_digest()
         except (ConfigError, DigestError) as exc:
             await interaction.followup.send(f"Error: {exc}", ephemeral=True)
             return
