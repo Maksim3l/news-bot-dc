@@ -73,6 +73,8 @@ for pair in ".env.example:.env" "sources.example.yml:sources.yml" "digest.exampl
     fi
 done
 mkdir -p data
+# Files edited or copied on Windows carry CRLF; a stray \r in .env ends up inside the token.
+sed -i 's/\r$//' .env sources.yml digest.yml
 
 env_get() { grep -E "^$1=" .env | head -n1 | cut -d= -f2- || true; }
 
