@@ -62,23 +62,46 @@ class NewsBot(commands.Bot):
         self.poller = Poller(self.settings, self.store, self.http_session, self.publish, self.collect)
 
         setup_commands(self)
-        if self.settings.guild_id:
-            guild = discord.Object(id=self.settings.guild_id)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-        else:
-            await self.tree.sync()
+        await self._sync_commands()
 
         self.poller.start(self.sources)
         self._start_scheduler()
 
+    def invite_link(self) -> str:
+        if not self.application_id:
+            return "(set DISCORD_APPLICATION_ID to get a link here)"
+        return discord.utils.oauth_url(
+            self.application_id, permissions=INVITE_PERMISSIONS, scopes=("bot", "applications.commands")
+        )
+
+    async def _sync_commands(self) -> None:
+        """Registers slash commands. Failing here must not stop the bot: it still posts without them."""
+        try:
+            if self.settings.guild_id:
+                guild = discord.Object(id=self.settings.guild_id)
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+            else:
+                await self.tree.sync()
+        except discord.Forbidden:
+            log.error(
+                "the bot is not in server %s yet, so its slash commands are not registered. "
+                "Invite it with: %s  (commands register as soon as it joins)",
+                self.settings.guild_id, self.invite_link(),
+            )
+        except discord.HTTPException as exc:
+            log.error("could not register slash commands (%s); retrying on the next restart", exc)
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        log.info("joined server %s (%s)", guild.name, guild.id)
+        if not self.settings.guild_id or guild.id == self.settings.guild_id:
+            await self._sync_commands()
+
     async def on_ready(self) -> None:
         log.info("logged in as %s, watching %d sources", self.user, len(self.enabled_sources))
-        if self.application_id:
-            invite = discord.utils.oauth_url(
-                self.application_id, permissions=INVITE_PERMISSIONS, scopes=("bot", "applications.commands")
-            )
-            log.info("invite link: %s", invite)
+        log.info("invite link: %s", self.invite_link())
+        if not self.guilds:
+            log.warning("the bot is in no server yet; open the invite link above")
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.watching, name=f"{len(self.enabled_sources)} sites"
         ))
@@ -191,10 +214,16 @@ class NewsBot(commands.Bot):
             self._model_check = asyncio.create_task(self._ensure_model(ensure), name="digest-model")
 
     async def _ensure_model(self, ensure) -> None:
-        try:
-            await ensure()
-        except DigestError as exc:
-            log.error("digest model not ready: %s", exc)
+        # Keeps trying: a download cut off by a restart or a network drop resumes where it stopped.
+        delay = 30
+        while True:
+            try:
+                await ensure()
+                return
+            except DigestError as exc:
+                log.error("digest model not ready: %s (retrying in %d s)", exc, delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 1800)
 
     def _start_scheduler(self) -> None:
         self.scheduler = None

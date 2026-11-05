@@ -29,6 +29,9 @@ def configure_logging(level: str) -> None:
         datefmt="%H:%M:%S",
     )
     logging.getLogger("discord").setLevel(logging.WARNING)
+    # Voice libraries and the message content intent are not used; their startup warnings are noise.
+    logging.getLogger("discord.client").setLevel(logging.ERROR)
+    logging.getLogger("discord.ext.commands.bot").setLevel(logging.ERROR)
 
 
 def offline_settings() -> Settings:
