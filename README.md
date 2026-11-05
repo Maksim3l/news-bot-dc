@@ -9,12 +9,14 @@ Feeds, plain HTML pages and JSON endpoints all work. Every setting lives in thre
 
 ## Setup
 
+### Ubuntu (recommended)
+
 ```bash
 git clone https://github.com/Maksim3l/news-bot-dc && cd news-bot-dc
-make setup
+./setup.sh
 ```
 
-`make setup` creates a venv and copies the three templates to your own local files. Existing files are never overwritten, and none of the three is tracked by git:
+`setup.sh` installs Docker Engine from Docker's apt repository if it is missing and creates your local config files from the templates. It asks for the Discord values below, then starts the bot and Ollama. Running it again keeps existing files and values. Both containers come back on their own after a reboot.
 
 | Template | Your copy | Holds |
 | --- | --- | --- |
@@ -22,25 +24,32 @@ make setup
 | `sources.example.yml` | `sources.yml` | Every site the bot reads |
 | `digest.example.yml` | `digest.yml` | Daily digest schedule, model and categories |
 
-1. Open https://discord.com/developers/applications, create an application, open **Bot**, press **Reset Token**, copy it into `DISCORD_TOKEN` in `.env`.
-2. In Discord turn on **User Settings > Advanced > Developer Mode**, right-click the channel you want, **Copy Channel ID**, paste it into `DISCORD_CHANNEL_ID`.
-3. Nothing to do for the model with docker: compose runs Ollama next to the bot and downloads the model on first start. Without docker, install Ollama yourself; `OLLAMA_URL` in `.env` points at it.
-4. Optional: copy **General Information > Application ID** into `DISCORD_APPLICATION_ID`; the bot then logs a ready invite link on startup.
-5. Invite the bot: **OAuth2 > URL Generator**, scopes `bot` and `applications.commands`, permissions `Send Messages` and `Embed Links`. Open the generated URL.
-6. Start it:
+None of the three is tracked by git.
+
+### What you need
+
+- Ubuntu with about 24 GB of RAM, so the default model's 20 GB fits while the digest builds, and about 25 GB of free disk for the model.
+- A Discord bot token, the channel ID to post in, and optionally your server ID and the bot's application ID. They come from these places:
+
+1. **Bot token**: https://discord.com/developers/applications, **New Application**, give it a name. Open **Bot**, press **Reset Token**, copy it. Discord shows it only once; if you lose it, reset again. Anyone with the token controls the bot, so it only goes in `.env`.
+2. **Application ID**: same app, **General Information > Application ID**. Optional; with it the bot logs a ready invite link on startup.
+3. **Invite the bot**: **OAuth2 > URL Generator**, scopes `bot` and `applications.commands`, permissions `Send Messages` and `Embed Links`. Open the generated URL and pick your server.
+4. **Channel ID and server ID**: in Discord, **User Settings > Advanced > Developer Mode** on. Right-click the channel, **Copy Channel ID**. Right-click the server icon, **Copy Server ID** (optional; slash commands then appear immediately instead of within an hour).
+
+### Without docker
 
 ```bash
+make setup                 # venv, packages, local config files
+# fill in DISCORD_TOKEN and DISCORD_CHANNEL_ID in .env, install Ollama yourself
 python -m newsbot
 ```
 
 No privileged intents have to be enabled. The bot never reads message content.
 
-Optional: put your server ID in `DISCORD_GUILD_ID` and slash commands show up immediately instead of taking up to an hour to spread globally.
-
-Before starting the bot you can verify every site without a token at all:
+Check every site without a Discord token:
 
 ```bash
-python -m newsbot check
+docker compose run --rm newsbot python -m newsbot check     # or without docker: python -m newsbot check
 ```
 
 That prints one line per source, with the newest headline it found or the reason it failed, then the digest schedule.
@@ -48,7 +57,7 @@ That prints one line per source, with the newest headline it found or the reason
 To see what the digest would pick right now, without posting anything:
 
 ```bash
-python -m newsbot digest
+docker compose run --rm newsbot python -m newsbot digest
 ```
 
 It fetches every source once, fills the pool and prints the picks, English links and quote.
@@ -267,7 +276,7 @@ That copies any missing templates first, then runs `docker compose up -d --build
 - `newsbot`, which reads `.env` and mounts `sources.yml`, `digest.yml` and `data/` from the host. Every setting stays local: edit the files, then `/reload` (YAML) or `docker compose restart` (`.env`).
 - `ollama`, reachable only by the bot. Models live in the `ollama` volume, so the roughly 20 GB download happens once. On first start the bot asks it to download the configured model; follow it with `docker compose logs -f newsbot`.
 
-On Windows, Docker Desktop gives its VM half the PC's RAM by default. The model needs about 20 GB of that.
+On Windows instead of Ubuntu, Docker Desktop gives its VM half the PC's RAM by default. The model needs about 20 GB of that.
 
 Create `sources.yml` and `digest.yml` before the first `docker compose up`. If they are missing, docker creates empty directories with those names and the bot stops with a message saying so.
 

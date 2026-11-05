@@ -1,6 +1,9 @@
 services:
   newsbot:
     build: .
+    # setup.sh writes HOST_UID/HOST_GID into .env so the container can write
+    # data/ and sources.yml as your user.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     env_file: .env
     environment:
       # The ollama service below, by its compose name. Overrides OLLAMA_URL from .env.
