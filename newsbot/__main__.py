@@ -1,4 +1,9 @@
-"""Entry point. `python -m newsbot` runs the bot, `python -m newsbot check` validates sources offline."""
+"""Entry point.
+
+python -m newsbot           runs the bot
+python -m newsbot check     fetches every source and validates digest.yml, no Discord token needed
+python -m newsbot digest    fetches every source and prints the digest it would post, posts nothing
+"""
 
 from __future__ import annotations
 
@@ -8,12 +13,13 @@ import sys
 
 import discord
 
-from newsbot.config import ConfigError, load_settings, load_sources
+from newsbot.config import ConfigError, Settings, load_settings, load_sources
+from newsbot.digest.llm import DigestError
 from newsbot.fetchers import get_fetcher
 from newsbot.filters import apply_filters
 from newsbot.http import FetchError, build_session, download
 
-USAGE = "usage: python -m newsbot [run|check [source name]]"
+USAGE = "usage: python -m newsbot [run | check [source name] | digest]"
 
 
 def configure_logging(level: str) -> None:
@@ -25,13 +31,30 @@ def configure_logging(level: str) -> None:
     logging.getLogger("discord").setLevel(logging.WARNING)
 
 
-async def check(names: list[str]) -> int:
-    """Fetches every source and prints what came back. Needs no Discord token."""
+def offline_settings() -> Settings:
     settings = load_settings(require_token=False)
     configure_logging(settings.log_level)
-    # Nothing is posted in check mode, so an unset channel must not block validation.
+    # Nothing is posted offline, so an unset channel must not block validation.
     if settings.default_channel_id is None:
         settings.default_channel_id = 0
+    return settings
+
+
+def describe_digest(settings: Settings) -> str:
+    from newsbot.digest.config import load_digest
+
+    if not settings.digest_file.exists():
+        return f"digest off ({settings.digest_file} not found)"
+    config = load_digest(settings)
+    if not config.enabled:
+        return "digest off (enabled: false)"
+    keys = ", ".join(category.key for category in config.categories)
+    return f"digest daily at {config.post_at:%H:%M} {config.timezone.key}, model {config.model}, categories: {keys}"
+
+
+async def check(names: list[str]) -> int:
+    """Fetches every source and prints what came back. Needs no Discord token."""
+    settings = offline_settings()
     sources = load_sources(settings)
     if names:
         wanted = {name.lower() for name in names}
@@ -60,7 +83,40 @@ async def check(names: list[str]) -> int:
         await session.close()
 
     print(f"\n{len(sources) - failures}/{len(sources)} sources healthy")
+    print(describe_digest(settings))
     return 1 if failures else 0
+
+
+async def dry_run_digest() -> int:
+    """Fills the pool from every source once, then prints the digest. Posts and records nothing."""
+    from newsbot.digest.builder import DigestBuilder
+    from newsbot.digest.config import load_digest
+    from newsbot.digest.llm import ClaudeJsonModel
+    from newsbot.digest.pool import CandidatePool
+    from newsbot.digest.render import digest_text
+
+    settings = offline_settings()
+    config = load_digest(settings)
+    sources = [source for source in load_sources(settings) if source.enabled]
+    pool = CandidatePool(settings.database_path)
+    session = build_session(settings)
+    try:
+        for source in sources:
+            try:
+                body = await download(session, source.url, source.headers, source.name)
+                items = apply_filters(await get_fetcher(source.kind)(source, body), source.filters)
+            except (ConfigError, FetchError) as exc:
+                print(f"skip  {source.name}: {exc}")
+                continue
+            added = pool.add(items, source.language, config.max_age_hours)
+            print(f"pool  {source.name}: {len(items)} fetched, {added} new")
+        print()
+        digest = await DigestBuilder(config, pool, ClaudeJsonModel(config), session).build()
+        print(digest_text(digest))
+    finally:
+        await session.close()
+        pool.close()
+    return 0
 
 
 def run() -> int:
@@ -85,11 +141,16 @@ def main(argv: list[str]) -> int:
     try:
         if command == "check":
             return asyncio.run(check(argv[1:]))
+        if command == "digest":
+            return asyncio.run(dry_run_digest())
         if command in ("run", ""):
             return run()
     except ConfigError as exc:
         print(f"configuration problem: {exc}")
         return 2
+    except DigestError as exc:
+        print(f"digest failed: {exc}")
+        return 1
     print(USAGE)
     return 2
 

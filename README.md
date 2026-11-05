@@ -1,21 +1,33 @@
 # news-bot-dc
 
-A Discord bot that watches websites and posts anything new to your channels. Feeds, plain HTML pages and JSON endpoints all work, and every site lives in one file: `sources.yml`.
+A Discord bot that watches websites and posts to your channels in two ways:
+
+- **Live**: anything new from a source is posted as it appears.
+- **Daily digest**: once a day a Claude model reads everything collected in the last 24 hours and picks at most one article per category (by default "tech and research" and "good news"), or none when nothing is good enough. Slovenian picks get an English article on the same story linked under them, and the digest ends with a line from The Office that fits the day's picks.
+
+Feeds, plain HTML pages and JSON endpoints all work. Every setting lives in three local files made from templates: `.env`, `sources.yml` and `digest.yml`.
 
 ## Setup
 
-Four steps, two of them are pasting values.
-
 ```bash
 git clone https://github.com/Maksim3l/news-bot-dc && cd news-bot-dc
-pip install -r requirements.txt
-cp .env.example .env
+make setup
 ```
+
+`make setup` creates a venv and copies the three templates to your own local files. Existing files are never overwritten, and none of the three is tracked by git:
+
+| Template | Your copy | Holds |
+| --- | --- | --- |
+| `.env.example` | `.env` | Tokens, IDs, paths and runtime knobs |
+| `sources.example.yml` | `sources.yml` | Every site the bot reads |
+| `digest.example.yml` | `digest.yml` | Daily digest schedule, model and categories |
 
 1. Open https://discord.com/developers/applications, create an application, open **Bot**, press **Reset Token**, copy it into `DISCORD_TOKEN` in `.env`.
 2. In Discord turn on **User Settings > Advanced > Developer Mode**, right-click the channel you want, **Copy Channel ID**, paste it into `DISCORD_CHANNEL_ID`.
-3. Invite the bot: **OAuth2 > URL Generator**, scopes `bot` and `applications.commands`, permissions `Send Messages` and `Embed Links`. Open the generated URL.
-4. Start it:
+3. Get an API key at https://console.anthropic.com and paste it into `ANTHROPIC_API_KEY`. Only the digest needs it.
+4. Optional: copy **General Information > Application ID** into `DISCORD_APPLICATION_ID`; the bot then logs a ready invite link on startup.
+5. Invite the bot: **OAuth2 > URL Generator**, scopes `bot` and `applications.commands`, permissions `Send Messages` and `Embed Links`. Open the generated URL.
+6. Start it:
 
 ```bash
 python -m newsbot
@@ -31,7 +43,15 @@ Before starting the bot you can verify every site without a token at all:
 python -m newsbot check
 ```
 
-That prints one line per source, with the newest headline it found or the reason it failed.
+That prints one line per source, with the newest headline it found or the reason it failed, then the digest schedule.
+
+To see what the digest would pick right now, without posting anything:
+
+```bash
+python -m newsbot digest
+```
+
+It fetches every source once, fills the pool and prints the picks, English links and quote.
 
 ## Adding a site
 
@@ -66,6 +86,8 @@ Then run `/reload` in Discord, or restart. Two lines is a complete entry, everyt
 | `filters` | none | `include` and `exclude` lists of regexes |
 | `selectors` | none | Required for `html` and `json` |
 | `headers` | none | Extra HTTP headers, for example an API key |
+| `language` | `en` | `sl` for Slovenian sources; non-English digest picks get an English link |
+| `post` | `true` | `false` stops live posting; the source then only feeds the digest |
 
 Name your channels once and every source reads cleanly:
 
@@ -132,6 +154,44 @@ Both lists are case-insensitive regexes matched against title and summary. `excl
         - "oglasno sporocilo"
 ```
 
+### Sites without a usable feed
+
+A Google News search feed works for any site or keyword. The template reads GZS and all Dewesoft mentions this way:
+
+```yaml
+  - name: GZS
+    url: https://news.google.com/rss/search?q=site:gzs.si&hl=sl&gl=SI&ceid=SI:sl
+    language: sl
+    post: false
+```
+
+## Daily digest
+
+Every fetched item goes into a pool, whether or not it is posted live. At `post_at` the bot sends the last `window_hours` of the pool to the model in one request and asks for at most one article per category. Then:
+
+1. A category with `prefer` patterns is filled by a matching article whenever one exists, whatever the model chose. The template makes anything mentioning Dewesoft win the tech slot.
+2. For each non-English pick, an English article from the pool is used if the model found one covering the same story. Otherwise the bot searches Google News in English and the model checks which result is the same story, or none.
+3. The model gives theme words and Office lines it remembers. Remembered lines are checked against the full transcript in `assets/office_quotes.csv`; unverified ones are dropped. The verified lines plus the best keyword matches go back to the model, which chooses one. The posted quote is always the transcript's text, never the model's.
+
+Picked articles are never picked again, and each day posts at most once even across restarts.
+
+A day uses three to five requests, about 50k input tokens in total with a 400-article pool. On Haiku 5.5 that is well under a cent a day.
+
+Categories are plain data in `digest.yml`:
+
+```yaml
+categories:
+  - key: tech
+    title: Tech and research
+    brief: >
+      A notable technology improvement, research result, or new EU rule...
+    prefer:
+      - "dewe ?soft"
+    prefer_note: Anything new about Dewesoft takes this slot.
+```
+
+Add, remove or reword categories there and run `/reload`. The rest of the file (time, time zone, model, effort, quality bar, window sizes) is commented in the template.
+
 ## Commands
 
 | Command | Who | What it does |
@@ -144,7 +204,8 @@ Both lists are case-insensitive regexes matched against title and summary. `excl
 | `/pause name` | Manage Server | Pauses a site, keeps the entry |
 | `/resume name` | Manage Server | Resumes a paused site |
 | `/pollnow [name]` | Manage Server | Polls one site or all of them immediately |
-| `/reload` | Manage Server | Re-reads `sources.yml` from disk |
+| `/reload` | Manage Server | Re-reads `sources.yml` and `digest.yml` from disk |
+| `/digest [post]` | Manage Server | Builds today's digest now; shows it only to you unless `post:true` |
 
 ## Settings
 
@@ -154,8 +215,11 @@ Everything in `.env` except the first two values has a working default.
 | --- | --- | --- |
 | `DISCORD_TOKEN` | required | Bot token |
 | `DISCORD_CHANNEL_ID` | required unless every source names a channel | Default channel |
+| `ANTHROPIC_API_KEY` | required for the digest | Claude API key |
 | `DISCORD_GUILD_ID` | empty | Set it for instant slash command registration |
+| `DISCORD_APPLICATION_ID` | empty | Bot application ID; enables the invite link in the log |
 | `SOURCES_FILE` | `sources.yml` | Watch list location |
+| `DIGEST_FILE` | `digest.yml` | Digest settings; missing file turns the digest off |
 | `DATABASE_PATH` | `data/seen.sqlite3` | Dedupe database |
 | `POLL_INTERVAL` | `600` | Default seconds between polls |
 | `MAX_ITEMS_PER_POLL` | `5` | Flood guard per source per poll |
@@ -178,10 +242,12 @@ Each source polls on its own timer in its own task. One broken selector or one s
 ## Running in the background
 
 ```bash
-docker compose up -d --build
+make docker
 ```
 
-The compose file mounts `sources.yml` and `data/`, so edits on the host apply after `/reload` and the dedupe database survives rebuilds.
+That copies any missing templates first, then runs `docker compose up -d --build`. The container reads `.env` and mounts `sources.yml`, `digest.yml` and `data/` from the host, so every setting stays local: edit the files, then `/reload` (YAML) or `docker compose restart` (`.env`). The databases in `data/` survive rebuilds.
+
+Create `sources.yml` and `digest.yml` before the first `docker compose up`. If they are missing, docker creates empty directories with those names and the bot stops with a message saying so.
 
 For systemd instead:
 
@@ -214,9 +280,21 @@ newsbot/
   subscribe.py    turns a pasted URL into a source entry
   sourcefile.py   edits sources.yml without losing comments
   render.py       Item to Discord embed
+  digest/
+    config.py     digest.yml into typed settings
+    pool.py       every fetched item, stored for the daily pick
+    llm.py        the only module calling the Claude API
+    select.py     one article per category, preferred patterns enforced
+    english.py    English coverage for non-English picks
+    quotes.py     Office transcript search and quote verification
+    builder.py    runs the steps in order
+    render.py     digest to Discord embeds or plain text
+    scheduler.py  fires once a day at post_at
   bot.py          the Discord client
   commands.py     slash commands
-  __main__.py     run and check entry points
+  __main__.py     run, check and digest entry points
+assets/
+  office_quotes.csv   29k lines from the schrute transcript (MIT), rebuilt by tools/build_office_quotes.py
 ```
 
 Adding a new kind of site means one module in `fetchers/` with a `@register("name")` decorator. Nothing else changes.

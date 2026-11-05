@@ -8,8 +8,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY newsbot/ ./newsbot/
+COPY assets/ ./assets/
+COPY sources.example.yml digest.example.yml ./
 
-# sources.yml and data/ are mounted from the host so edits and the dedupe
+# sources.yml, digest.yml and data/ are mounted from the host so edits and the dedupe
 # database survive a rebuild.
 VOLUME ["/app/data"]
 

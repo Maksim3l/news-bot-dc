@@ -1,0 +1,80 @@
+# ---------------------------------------------------------------------------
+# Daily digest. Template: copy it to digest.yml (`make setup` does this) and
+# edit the copy. Delete digest.yml or set enabled: false to turn the digest off.
+#
+# Every source in sources.yml feeds a pool all day. Once a day at post_at the
+# model reads the pool and picks at most one article per category, or none if
+# nothing is good enough. Non-English picks get an English article on the same
+# story linked under them. Then it picks a line from The Office that fits.
+# Apply edits with /reload in Discord, or restart.
+# ---------------------------------------------------------------------------
+
+enabled: true
+
+# Channel ID, or a name from the "channels" block in sources.yml.
+# Empty means DISCORD_CHANNEL_ID from .env.
+channel:
+
+post_at: "08:00"
+timezone: Europe/Ljubljana
+
+# Any Claude model ID. Haiku 5.5 is plenty for ranking headlines once a day.
+# claude-sonnet-5-5 if the picks feel shallow, claude-opus-5-5 for the best judgement.
+model: claude-haiku-5-5
+# low | medium | high | xhigh | max. Higher reads the list more carefully and takes longer.
+effort: medium
+# On Opus, Sonnet 5.5 and Fable this retries a declined request on another
+# model. Haiku 5.5 does not support it, so it defaults to off there.
+# refusal_fallback: true
+
+# Hours of collected items the digest reads.
+window_hours: 24
+# Items published longer ago than this never enter the pool.
+max_age_hours: 48
+# Most articles shown to the model. Newest are kept; preferred ones always are.
+max_candidates: 400
+# Unpicked items are forgotten after this many days.
+keep_days: 14
+# true posts a short "nothing today" message when every category came back empty.
+post_when_empty: false
+
+quality_bar: >
+  Would a curious engineer in Slovenia be glad they read it? Real news with
+  something concrete in it. A slow day with no pick is better than a weak pick.
+
+# One slot per category, posted in this order.
+#   key          short id, lowercase
+#   title        heading shown in Discord
+#   brief        what belongs here, written for the model
+#   prefer       regexes; a matching article always wins this slot
+#   prefer_note  told to the model next to the brief
+categories:
+  - key: tech
+    title: Tech and research
+    brief: >
+      A notable technology improvement, an interesting piece of tech, a
+      research result, or a new EU rule or regulation affecting technology
+      or business. Slovenian industry news counts.
+    prefer:
+      - "dewe ?soft"
+    prefer_note: Anything new about Dewesoft (Slovenian test and measurement company) takes this slot.
+
+  - key: good_news
+    title: Good news
+    brief: >
+      Good news: climate, green tech, conservation and nature preservation,
+      or a hopeful statistic showing something measurably getting better.
+      Must be positive on its own terms, not a bad story with a silver lining.
+
+quote:
+  enabled: true
+  # Lines from the full US transcript, 6 to 45 words each.
+  dataset: assets/office_quotes.csv
+  # Lines shown to the model to choose from.
+  shortlist: 40
+
+english:
+  enabled: true
+  # Where English coverage is searched. {query} is filled in by the bot.
+  search_url: https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en
+  results: 8

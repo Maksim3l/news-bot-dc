@@ -128,3 +128,26 @@ def test_backoff_grows_with_failures(build, source: SourceConfig) -> None:
     assert poller._next_delay(source, failures=2) == 400
     assert poller._next_delay(source, failures=20) == poller_module.MAX_BACKOFF
     assert 90 <= poller._next_delay(source, failures=0) <= 110
+
+
+async def test_collector_sees_every_fetched_item(settings: Settings, rss_bytes: bytes, monkeypatch, source: SourceConfig) -> None:
+    site = Site(rss_bytes)
+    monkeypatch.setattr(poller_module, "download", site.download)
+    collected: list[Item] = []
+
+    async def collect(src: SourceConfig, items: list[Item]) -> None:
+        collected.extend(items)
+
+    poller = Poller(settings, SeenStore(settings.database_path), None, Recorder(), collect)
+    await poller.poll_once(source)
+    assert len(collected) == 2
+
+
+async def test_digest_only_source_never_posts(build, settings: Settings, source: SourceConfig) -> None:
+    settings.announce_backlog = True
+    source.post = False
+    poller, recorder, store, _ = build()
+
+    assert await poller.poll_once(source) == []
+    assert recorder.published == []
+    assert store.count() == 0

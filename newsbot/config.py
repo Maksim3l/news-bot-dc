@@ -40,7 +40,9 @@ class Settings:
     token: str
     default_channel_id: int | None
     guild_id: int | None
+    application_id: int | None
     sources_file: Path
+    digest_file: Path
     database_path: Path
     poll_interval: int
     max_items: int
@@ -70,6 +72,8 @@ class SourceConfig:
     selectors: dict[str, str] = field(default_factory=dict)
     filters: FilterRules = field(default_factory=FilterRules)
     headers: dict[str, str] = field(default_factory=dict)
+    language: str = "en"
+    post: bool = True
 
 
 def _env_text(name: str, default: str = "") -> str:
@@ -104,7 +108,9 @@ def load_settings(env_file: str | Path = ".env", require_token: bool = True) -> 
         token=token,
         default_channel_id=_env_int("DISCORD_CHANNEL_ID", None),
         guild_id=_env_int("DISCORD_GUILD_ID", None),
+        application_id=_env_int("DISCORD_APPLICATION_ID", None),
         sources_file=Path(_env_text("SOURCES_FILE", "sources.yml")),
+        digest_file=Path(_env_text("DIGEST_FILE", "digest.yml")),
         database_path=Path(_env_text("DATABASE_PATH", "data/seen.sqlite3")),
         poll_interval=_env_int("POLL_INTERVAL", 600),
         max_items=_env_int("MAX_ITEMS_PER_POLL", 5),
@@ -195,16 +201,36 @@ def build_source(raw: dict[str, Any], defaults: dict[str, Any], aliases: dict[st
         selectors=selectors,
         filters=filters,
         headers=dict(merged.get("headers") or {}),
+        language=str(merged.get("language") or "en").strip().lower(),
+        post=bool(merged.get("post", True)),
     )
+
+
+def read_yaml(path: Path, template: str) -> Any:
+    if not path.exists():
+        raise ConfigError(f"{path} not found. Copy {template} to {path} and edit it.")
+    if path.is_dir():
+        # docker creates a directory when a bind-mounted file is missing on the host
+        raise ConfigError(f"{path} is a directory. Create the file on the host (cp {template} {path.name}) and restart.")
+    return yaml_parser().load(path.read_text(encoding="utf-8")) or {}
+
+
+def channel_aliases(document: Any) -> dict[str, int]:
+    return {str(k): int(v) for k, v in (document.get("channels") or {}).items()}
+
+
+def load_channel_aliases(settings: Settings) -> dict[str, int]:
+    return channel_aliases(read_yaml(settings.sources_file, "sources.example.yml"))
+
+
+def resolve_channel(value: Any, aliases: dict[str, int], fallback: int | None, owner: str) -> int:
+    return _resolve_channel(value, aliases, fallback, owner)
 
 
 def load_sources(settings: Settings) -> list[SourceConfig]:
     path = settings.sources_file
-    if not path.exists():
-        raise ConfigError(f"{path} not found. Copy sources.example.yml to {path} and list the sites you want.")
-
-    document = yaml_parser().load(path.read_text(encoding="utf-8")) or {}
-    aliases = {str(k): int(v) for k, v in (document.get("channels") or {}).items()}
+    document = read_yaml(path, "sources.example.yml")
+    aliases = channel_aliases(document)
     defaults = dict(document.get("defaults") or {})
     entries = document.get("sources") or []
     if not entries:

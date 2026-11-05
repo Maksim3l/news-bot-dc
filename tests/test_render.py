@@ -56,8 +56,8 @@ def test_describe_source_reads_as_one_line() -> None:
     assert describe_source(source) == "**Slo-Tech** [off] `rss` every 300s -> <#42>"
 
 
-def test_the_shipped_sources_file_parses(settings: Settings) -> None:
-    settings.sources_file = REPOSITORY_ROOT / "sources.yml"
+def test_the_sources_template_parses(settings: Settings) -> None:
+    settings.sources_file = REPOSITORY_ROOT / "sources.example.yml"
     sources = load_sources(settings)
 
     assert any(source.name == "Slo-Tech" for source in sources)

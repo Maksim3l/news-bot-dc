@@ -23,6 +23,8 @@ log = logging.getLogger(__name__)
 
 MAX_BACKOFF = 3600
 Publisher = Callable[[SourceConfig, list[Item]], Awaitable[None]]
+# Receives every fetched item, posted or not. The daily digest uses it to fill its pool.
+Collector = Callable[[SourceConfig, list[Item]], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -39,8 +41,10 @@ class Poller:
         store: SeenStore,
         session: aiohttp.ClientSession,
         publish: Publisher,
+        collect: Collector | None = None,
     ) -> None:
         self._settings = settings
+        self._collect = collect
         self._store = store
         self._session = session
         self._publish = publish
@@ -80,6 +84,10 @@ class Poller:
         state = self.status[source.name]
         state.last_run = datetime.now(timezone.utc)
         state.last_error = None
+        if self._collect is not None:
+            await self._collect(source, items)
+        if not source.post:
+            return []
         fresh = await asyncio.to_thread(self._store.new_items, items)
         if not fresh:
             return []

@@ -1,4 +1,7 @@
 # ---------------------------------------------------------------------------
+# Template. Copy it to sources.yml (`make setup` does this) and edit the copy;
+# sources.yml is yours and is not tracked by git.
+#
 # Every site the bot watches lives here. Add one, save, then run /reload in
 # Discord (or restart). Nothing else in the project needs to change.
 #
@@ -18,6 +21,14 @@
 #   filters    include / exclude lists of case-insensitive regexes
 #   selectors  required for html and json sources, see the bottom of this file
 #   headers    extra HTTP headers, e.g. a cookie or API key
+#   language   en (default) | sl | ...; non-English daily digest picks get an
+#              English article on the same story linked next to them
+#   post       true (default) posts every new item to the channel as it
+#              appears; false only feeds the daily digest (digest.yml)
+#
+# Sites without a feed of their own can be read through a Google News search
+# feed, for example:
+#   https://news.google.com/rss/search?q=site:example.com&hl=sl&gl=SI&ceid=SI:sl
 # ---------------------------------------------------------------------------
 
 # Optional: give channel IDs a name so sources read nicely.
@@ -29,27 +40,34 @@ channels: {}
 defaults:
   interval: 600
   max_items: 5
+  post: true
 
 sources:
   # --- Slovenija -----------------------------------------------------------
   - name: Slo-Tech
     url: https://slo-tech.com/rss
+    language: sl
     color: "#c0392b"
 
   - name: RTV SLO
     url: https://img.rtvslo.si/feeds/00.xml
+    language: sl
 
   - name: RTV SLO Znanost in tehnologija
     url: https://img.rtvslo.si/feeds/16.xml
+    language: sl
 
   - name: 24ur
     url: https://www.24ur.com/rss
+    language: sl
 
   - name: N1 Slovenija
     url: https://n1info.si/feed/
+    language: sl
 
   - name: Racunalniske novice
     url: https://www.racunalniske-novice.com/feed
+    language: sl
 
   # --- Tech ----------------------------------------------------------------
   - name: Hacker News
@@ -75,6 +93,81 @@ sources:
 
   - name: GitHub Blog
     url: https://github.blog/feed/
+    interval: 3600
+
+  # --- Slovenian business, digest only --------------------------------------
+  - name: Forbes Slovenija
+    url: https://forbes.n1info.si/feed/
+    language: sl
+    post: false
+
+  # GZS publishes no feed, so it is read through a Google News site search.
+  - name: GZS
+    url: https://news.google.com/rss/search?q=site:gzs.si&hl=sl&gl=SI&ceid=SI:sl
+    language: sl
+    post: false
+    interval: 3600
+
+  # Anything mentioning Dewesoft, in either language. digest.yml gives these
+  # priority for the tech slot.
+  - name: Dewesoft news (sl)
+    url: https://news.google.com/rss/search?q=Dewesoft&hl=sl&gl=SI&ceid=SI:sl
+    language: sl
+    post: false
+    interval: 3600
+
+  - name: Dewesoft news (en)
+    url: https://news.google.com/rss/search?q=Dewesoft&hl=en-US&gl=US&ceid=US:en
+    post: false
+    interval: 3600
+
+  # --- Finance, digest only ------------------------------------------------
+  - name: Yahoo Finance
+    url: https://finance.yahoo.com/news/rssindex
+    post: false
+
+  # --- Research and EU policy, digest only ----------------------------------
+  - name: MIT Technology Review
+    url: https://www.technologyreview.com/feed/
+    post: false
+
+  - name: ScienceDaily Technology
+    url: https://www.sciencedaily.com/rss/top/technology.xml
+    post: false
+
+  - name: Euractiv
+    url: https://www.euractiv.com/feed/
+    post: false
+
+  - name: European Parliament press
+    url: https://www.europarl.europa.eu/rss/doc/press-releases/en.xml
+    post: false
+    interval: 3600
+
+  # --- Good news and climate, digest only -----------------------------------
+  - name: Positive News
+    url: https://www.positive.news/feed/
+    post: false
+    interval: 3600
+
+  - name: Good News Network
+    url: https://www.goodnewsnetwork.org/feed/
+    post: false
+    interval: 3600
+
+  - name: Reasons to be Cheerful
+    url: https://reasonstobecheerful.world/feed/
+    post: false
+    interval: 3600
+
+  - name: Carbon Brief
+    url: https://www.carbonbrief.org/feed/
+    post: false
+    interval: 3600
+
+  - name: Mongabay
+    url: https://news.mongabay.com/feed/
+    post: false
     interval: 3600
 
   # --- Filtering example ---------------------------------------------------

@@ -10,6 +10,8 @@ from discord import app_commands
 
 from newsbot import sourcefile
 from newsbot.config import ConfigError, SourceConfig
+from newsbot.digest.llm import DigestError
+from newsbot.digest.render import build_digest_embeds, digest_heading
 from newsbot.http import FetchError
 from newsbot.render import build_embed, describe_source
 from newsbot.subscribe import discover_source
@@ -200,7 +202,34 @@ def setup_commands(bot: "NewsBot") -> None:
             f"Reloaded {len(sources)} source(s), {len(bot.enabled_sources)} active.", ephemeral=True
         )
 
+    @app_commands.command(name="digest", description="Build today's digest now")
+    @app_commands.describe(post="Post it to the digest channel (default: only show it to you)")
+    @app_commands.default_permissions(manage_guild=True)
+    async def digest_command(interaction: discord.Interaction, post: bool = False) -> None:
+        await interaction.response.defer(ephemeral=True)
+        try:
+            digest = await bot.build_digest()
+        except (ConfigError, DigestError) as exc:
+            await interaction.followup.send(f"Error: {exc}", ephemeral=True)
+            return
+
+        if post:
+            sent = await bot.post_digest(digest)
+            word = "Posted" if sent else "Nothing posted for"
+            await interaction.followup.send(
+                f"{word} today's digest ({len(digest.entries)} pick(s) from {digest.considered} articles).",
+                ephemeral=True,
+            )
+            return
+
+        embeds = build_digest_embeds(digest)[:EMBEDS_PER_MESSAGE]
+        summary = f"{digest_heading(digest)} preview, {digest.considered} articles considered."
+        if digest.empty:
+            summary += "\nNothing cleared the bar."
+        await interaction.followup.send(summary, embeds=embeds, ephemeral=True)
+
     for command in (
+        digest_command,
         sources_command,
         status_command,
         preview_command,

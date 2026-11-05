@@ -1,13 +1,21 @@
-.PHONY: setup check run test docker
+.PHONY: setup config check digest run test docker
 
-setup:
+setup: config
 	python3 -m venv .venv
 	.venv/bin/pip install -r requirements.txt
+
+# Local copies of the templates. Existing files are never overwritten.
+config:
 	cp -n .env.example .env || true
-	@echo "Now fill in DISCORD_TOKEN and DISCORD_CHANNEL_ID in .env"
+	cp -n sources.example.yml sources.yml || true
+	cp -n digest.example.yml digest.yml || true
+	@echo "Now fill in DISCORD_TOKEN, DISCORD_CHANNEL_ID and ANTHROPIC_API_KEY in .env"
 
 check:
 	python3 -m newsbot check
+
+digest:
+	python3 -m newsbot digest
 
 run:
 	python3 -m newsbot
@@ -15,5 +23,5 @@ run:
 test:
 	python3 -m pytest -q
 
-docker:
+docker: config
 	docker compose up -d --build

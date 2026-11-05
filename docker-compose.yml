@@ -4,5 +4,8 @@ services:
     env_file: .env
     restart: unless-stopped
     volumes:
+      # Run `make setup` first: if these files do not exist on the host,
+      # docker creates directories in their place and the bot refuses to start.
       - ./sources.yml:/app/sources.yml
+      - ./digest.yml:/app/digest.yml
       - ./data:/app/data
