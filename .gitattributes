@@ -1,0 +1,8 @@
+# Shell scripts must keep LF or bash fails with "$'\r': command not found"
+# when git on Windows converts line endings.
+*.sh  text eol=lf
+*.py  text eol=lf
+*.yml text eol=lf
+.env.example text eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf

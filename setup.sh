@@ -8,6 +8,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        echo "This is the Ubuntu setup. On Windows, double-click setup.cmd instead." >&2
+        exit 1 ;;
+esac
+
 MIN_RAM_GB=24          # the default model needs about 20 GB while the digest builds
 DEFAULT_MODEL="qwen3.6:35b-a3b"
 

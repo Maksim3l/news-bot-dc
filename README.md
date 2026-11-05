@@ -26,9 +26,13 @@ git clone https://github.com/Maksim3l/news-bot-dc && cd news-bot-dc
 
 None of the three is tracked by git.
 
+### Windows
+
+Double-click `setup.cmd`. It checks Docker Desktop (and offers to install it with winget), creates the same three files, asks the same questions and starts both containers. The window stays open at the end so you can read the result. `setup.sh` is Linux only.
+
 ### What you need
 
-- Ubuntu with about 24 GB of RAM, so the default model's 20 GB fits while the digest builds, and about 25 GB of free disk for the model.
+- Ubuntu or Windows with Docker Desktop, about 24 GB of RAM, so the default model's 20 GB fits while the digest builds, and about 25 GB of free disk for the model.
 - A Discord bot token, the channel ID to post in, and optionally your server ID and the bot's application ID. They come from these places:
 
 1. **Bot token**: https://discord.com/developers/applications, **New Application**, give it a name. Open **Bot**, press **Reset Token**, copy it. Discord shows it only once; if you lose it, reset again. Anyone with the token controls the bot, so it only goes in `.env`.
